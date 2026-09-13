@@ -1,14 +1,3 @@
-#=============================================================
-# DISCLAIMER
-# This  code is provided "as is" and "with all faults" for 
-# educational and research use only. The author makes no 
-# representations or warranties of any kind concerning its 
-# correctness or suitability for any particular purposes.  
-# R.G.ThomasNOSPAM AT kent.ac.uk
-#=============================================================
-
-
-
 # ============================================================
 # Exact Laplace-domain pricing for a put on GBM reflected at
 # a trailing barrier b times its own running maximum
@@ -1490,3 +1479,120 @@ trailing_put_price_delta_state <- function(
   )
 }
 
+
+trailing_put_delta_check <- function(
+    tau,
+    y,
+    m,
+    K,
+    b,
+    r,
+    q,
+    sigma,
+    shifts = c(8, 10, 12),
+    relative_bump = 1e-4,
+    ilt_ns = 20,
+    ilt_nd = 19
+) {
+  # Compare:
+  #   (i) analytical transform delta at several ILT shifts; and
+  #   (ii) a finite difference of the exact transform price,
+  #        holding m fixed.
+  #
+  # The finite difference is only a numerical cross-check.
+
+  y <- .tb_validate_state(y, m, K, b, sigma)
+
+  deltas <- vapply(
+    shifts,
+    FUN = function(shift) {
+      trailing_put_delta(
+        tau = tau,
+        y = y,
+        m = m,
+        K = K,
+        b = b,
+        r = r,
+        q = q,
+        sigma = sigma,
+        ilt_shift = shift,
+        ilt_ns = ilt_ns,
+        ilt_nd = ilt_nd,
+        warn = FALSE
+      )
+    },
+    FUN.VALUE = numeric(1)
+  )
+
+  bump <- relative_bump * max(1, y)
+  lower_state <- b * m
+  upper_state <- m
+
+  if (y - bump > lower_state && y + bump < upper_state) {
+    price_up <- trailing_put_price_state(
+      tau, y + bump, m, K, b, r, q, sigma,
+      ilt_shift = tail(shifts, 1),
+      ilt_ns = ilt_ns,
+      ilt_nd = ilt_nd,
+      warn = FALSE
+    )
+
+    price_down <- trailing_put_price_state(
+      tau, y - bump, m, K, b, r, q, sigma,
+      ilt_shift = tail(shifts, 1),
+      ilt_ns = ilt_ns,
+      ilt_nd = ilt_nd,
+      warn = FALSE
+    )
+
+    fd_delta <- (price_up - price_down) / (2 * bump)
+    fd_type <- "central"
+  } else if (y + bump < upper_state) {
+    price_here <- trailing_put_price_state(
+      tau, y, m, K, b, r, q, sigma,
+      ilt_shift = tail(shifts, 1),
+      ilt_ns = ilt_ns,
+      ilt_nd = ilt_nd,
+      warn = FALSE
+    )
+
+    price_up <- trailing_put_price_state(
+      tau, y + bump, m, K, b, r, q, sigma,
+      ilt_shift = tail(shifts, 1),
+      ilt_ns = ilt_ns,
+      ilt_nd = ilt_nd,
+      warn = FALSE
+    )
+
+    fd_delta <- (price_up - price_here) / bump
+    fd_type <- "forward"
+  } else {
+    price_here <- trailing_put_price_state(
+      tau, y, m, K, b, r, q, sigma,
+      ilt_shift = tail(shifts, 1),
+      ilt_ns = ilt_ns,
+      ilt_nd = ilt_nd,
+      warn = FALSE
+    )
+
+    price_down <- trailing_put_price_state(
+      tau, y - bump, m, K, b, r, q, sigma,
+      ilt_shift = tail(shifts, 1),
+      ilt_ns = ilt_ns,
+      ilt_nd = ilt_nd,
+      warn = FALSE
+    )
+
+    fd_delta <- (price_here - price_down) / bump
+    fd_type <- "backward"
+  }
+
+  data.frame(
+    ilt_shift = shifts,
+    transform_delta = deltas,
+    finite_difference_delta = fd_delta,
+    finite_difference_type = fd_type,
+    transform_minus_finite_difference = deltas - fd_delta,
+    row.names = NULL
+  )
+}
